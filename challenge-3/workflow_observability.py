@@ -87,7 +87,9 @@ class CustomerDataResponse(BaseModel):
     raw_customer: dict = {}
     transaction_history: list = []
 
+
 class RiskAnalysisResponse(BaseModel):
+    customer_data: str
     risk_analysis: str
     risk_score: str
     transaction_id: str
@@ -745,6 +747,7 @@ Provide a structured risk assessment with clear regulatory justification.
                     })
                     
                     final_result = RiskAnalysisResponse(
+                        customer_data=customer_response.customer_data,
                         risk_analysis=result_text,
                         risk_score="Assessed by Risk Agent based on Cosmos DB data",
                         transaction_id=customer_response.transaction_id,
@@ -762,6 +765,7 @@ Provide a structured risk assessment with clear regulatory justification.
             span.record_exception(e)
             
             error_result = RiskAnalysisResponse(
+                customer_data=customer_response.customer_data if customer_response else "No customer data available",
                 risk_analysis=f"Error in risk analysis: {str(e)}",
                 risk_score="Unknown",
                 transaction_id=customer_response.transaction_id if customer_response else "Unknown",
@@ -1060,6 +1064,8 @@ Send alerts using the MCP tool without asking for further confirmation.
                 
                 # Create comprehensive message based on risk analysis
                 risk_summary = f"""
+Customer data: {risk_response.customer_data}
+
 RISK ANALYSIS SUMMARY FOR TRANSACTION {risk_response.transaction_id}
 
 Risk Analysis Result: {risk_response.risk_analysis}
@@ -1257,7 +1263,7 @@ async def run_fraud_detection_workflow():
         # Create request
         request = AnalysisRequest(
             message="Comprehensive fraud analysis using Microsoft Agent Framework with parallel execution and observability",
-            transaction_id="TX1012"
+            transaction_id="TX1015"
         )
         
         workflow_span.set_attributes({
