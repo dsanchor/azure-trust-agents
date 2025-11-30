@@ -542,7 +542,7 @@ async def run_fraud_detection_workflow():
     # Create request
     request = AnalysisRequest(
         message="Comprehensive fraud analysis using Microsoft Agent Framework",
-        transaction_id="TX2002"
+        transaction_id="TX1016"
     )
     
     # Execute workflow with streaming
