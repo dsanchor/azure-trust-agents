@@ -33,6 +33,7 @@ The implementation follows Challenge 2's parallel execution pattern where both
 compliance reports and fraud alerts are generated simultaneously after risk analysis.
 """
 
+import argparse
 import asyncio
 import os
 import json
@@ -82,6 +83,7 @@ class CustomerDataResponse(BaseModel):
     customer_data: str
     transaction_data: str
     transaction_id: str
+    customer_id: str = ""
     status: str
     raw_transaction: dict = {}
     raw_customer: dict = {}
@@ -93,6 +95,7 @@ class RiskAnalysisResponse(BaseModel):
     risk_analysis: str
     risk_score: str
     transaction_id: str
+    customer_id: str = ""
     status: str
     risk_factors: list = []
     recommendation: str = ""
@@ -109,6 +112,8 @@ class ComplianceAuditResponse(BaseModel):
     requires_immediate_action: bool = False
     requires_regulatory_filing: bool = False
     transaction_id: str
+    customer_id: str = ""
+    report_file_path: str = ""
     status: str
 
 class FraudAlertResponse(BaseModel):
@@ -544,6 +549,7 @@ Ready for risk assessment analysis.
                     customer_data=analysis_text,
                     transaction_data=f"Workflow analysis for {request.transaction_id}",
                     transaction_id=request.transaction_id,
+                    customer_id=customer_id,
                     status="SUCCESS",
                     raw_transaction=transaction_data,
                     raw_customer=customer_data,
@@ -751,6 +757,7 @@ Provide a structured risk assessment with clear regulatory justification.
                         risk_analysis=result_text,
                         risk_score="Assessed by Risk Agent based on Cosmos DB data",
                         transaction_id=customer_response.transaction_id,
+                        customer_id=customer_response.customer_id,
                         status="SUCCESS",
                         risk_factors=risk_factors,
                         recommendation=recommendation,
@@ -769,9 +776,122 @@ Provide a structured risk assessment with clear regulatory justification.
                 risk_analysis=f"Error in risk analysis: {str(e)}",
                 risk_score="Unknown",
                 transaction_id=customer_response.transaction_id if customer_response else "Unknown",
+                customer_id=customer_response.customer_id if customer_response else "Unknown",
                 status="ERROR"
             )
             await ctx.send_message(error_result)
+
+
+def save_compliance_report_to_markdown(report: dict, customer_id: str, transaction_id: str, ai_analysis: str) -> str:
+    """Save compliance report to a markdown file and return the file path."""
+    
+    # Create reports directory if it doesn't exist
+    reports_dir = os.path.join(os.path.dirname(__file__), "compliance_reports")
+    os.makedirs(reports_dir, exist_ok=True)
+    
+    # Generate filename using customer_id and transaction_id
+    filename = f"{customer_id}_{transaction_id}.md"
+    filepath = os.path.join(reports_dir, filename)
+    
+    # Generate markdown content
+    markdown_content = f"""# Compliance Audit Report
+
+## Report Information
+- **Report ID:** {report.get('audit_report_id', 'N/A')}
+- **Generated:** {report.get('generated_timestamp', datetime.now().isoformat())}
+- **Report Type:** {report.get('report_type', 'TRANSACTION_AUDIT')}
+- **Customer ID:** {customer_id}
+- **Transaction ID:** {transaction_id}
+
+---
+
+## Executive Summary
+
+**Audit Conclusion:** {report.get('executive_summary', {}).get('audit_conclusion', 'N/A')}
+
+**Overall Assessment:** {report.get('executive_summary', {}).get('overall_assessment', 'N/A')}
+
+### Key Findings
+"""
+    
+    key_findings = report.get('executive_summary', {}).get('key_findings', [])
+    if key_findings:
+        for finding in key_findings:
+            markdown_content += f"- {finding}\n"
+    else:
+        markdown_content += "- No significant findings\n"
+    
+    markdown_content += f"""
+---
+
+## Compliance Status
+
+| Metric | Value |
+|--------|-------|
+| **Compliance Rating** | {report.get('compliance_status', {}).get('compliance_rating', 'N/A')} |
+| **Requires Immediate Action** | {'⚠️ YES' if report.get('compliance_status', {}).get('requires_immediate_action', False) else '✅ NO'} |
+| **Requires Regulatory Filing** | {'📋 YES' if report.get('compliance_status', {}).get('requires_regulatory_filing', False) else '✅ NO'} |
+| **Next Review Date** | {report.get('compliance_status', {}).get('next_review_date', 'N/A')} |
+
+---
+
+## Detailed Findings
+
+### Risk Factors Identified
+"""
+    
+    risk_factors = report.get('detailed_findings', {}).get('risk_factors_identified', [])
+    if risk_factors:
+        for factor in risk_factors:
+            markdown_content += f"- 🔴 {factor}\n"
+    else:
+        markdown_content += "- ✅ No risk factors identified\n"
+    
+    markdown_content += "\n### Compliance Concerns\n"
+    
+    concerns = report.get('detailed_findings', {}).get('compliance_concerns', [])
+    if concerns:
+        for concern in concerns:
+            markdown_content += f"- ⚠️ {concern}\n"
+    else:
+        markdown_content += "- ✅ No compliance concerns\n"
+    
+    markdown_content += "\n### Recommendations\n"
+    
+    recommendations = report.get('detailed_findings', {}).get('recommendations', [])
+    if recommendations:
+        for i, rec in enumerate(recommendations, 1):
+            markdown_content += f"{i}. {rec}\n"
+    else:
+        markdown_content += "- No specific recommendations at this time\n"
+    
+    markdown_content += f"""
+---
+
+## AI Analysis Summary
+
+{ai_analysis[:1000]}{'...' if len(ai_analysis) > 1000 else ''}
+
+---
+
+## Source Analysis
+
+```
+{report.get('source_analysis', {}).get('risk_analysis_summary', 'N/A')}
+```
+
+---
+
+*This report was automatically generated by the Fraud Detection Workflow System.*
+*Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}*
+"""
+    
+    # Write to file
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(markdown_content)
+    
+    return filepath
+
 
 @executor
 async def compliance_report_executor(
@@ -876,6 +996,19 @@ Provide a comprehensive compliance assessment that management can use for regula
                         parsed_elements = local_audit["source_analysis"]["parsed_elements"]
                         risk_score = parsed_elements.get("risk_score", 0.0)
                     
+                    # Save compliance report to markdown file
+                    customer_id = risk_response.customer_id or "UNKNOWN"
+                    report_file_path = save_compliance_report_to_markdown(
+                        report=local_audit,
+                        customer_id=customer_id,
+                        transaction_id=risk_response.transaction_id,
+                        ai_analysis=result_text
+                    )
+                    
+                    span.add_event("Compliance report saved to file", {
+                        "file_path": report_file_path
+                    })
+                    
                     # Combine AI-generated insights with structured local audit
                     final_result = ComplianceAuditResponse(
                         audit_report_id=local_audit["audit_report_id"],
@@ -888,6 +1021,8 @@ Provide a comprehensive compliance assessment that management can use for regula
                         requires_immediate_action=local_audit["compliance_status"]["requires_immediate_action"],
                         requires_regulatory_filing=local_audit["compliance_status"]["requires_regulatory_filing"],
                         transaction_id=risk_response.transaction_id,
+                        customer_id=customer_id,
+                        report_file_path=report_file_path,
                         status="SUCCESS"
                     )
                 else:
@@ -908,13 +1043,15 @@ Provide a comprehensive compliance assessment that management can use for regula
                     "compliance_rating": final_result.compliance_rating,
                     "immediate_action": str(final_result.requires_immediate_action),
                     "regulatory_filing": str(final_result.requires_regulatory_filing),
-                    "audit_report_id": final_result.audit_report_id
+                    "audit_report_id": final_result.audit_report_id,
+                    "report_file_path": final_result.report_file_path
                 })
                 
                 span.set_attributes({
                     "compliance.rating": final_result.compliance_rating,
                     "compliance.immediate_action": final_result.requires_immediate_action,
                     "compliance.regulatory_filing": final_result.requires_regulatory_filing,
+                    "compliance.report_file_path": final_result.report_file_path,
                     "executor.success": True,
                     "ai.enhanced": True
                 })
@@ -922,7 +1059,8 @@ Provide a comprehensive compliance assessment that management can use for regula
                 span.add_event("Compliance report generated successfully", {
                     "report_id": final_result.audit_report_id,
                     "compliance_rating": final_result.compliance_rating,
-                    "processing_time": processing_time
+                    "processing_time": processing_time,
+                    "report_file_path": final_result.report_file_path
                 })
                 
                 await ctx.yield_output(final_result)
@@ -1240,7 +1378,7 @@ Include all relevant transaction details, risk factors, and provide clear reason
             )
             await ctx.yield_output(error_result)
 
-async def run_fraud_detection_workflow():
+async def run_fraud_detection_workflow(transaction_id: str = "TX1015"):
     """Execute the fraud detection workflow with comprehensive observability and parallel execution."""
     
     with telemetry.create_workflow_span(
@@ -1263,7 +1401,7 @@ async def run_fraud_detection_workflow():
         # Create request
         request = AnalysisRequest(
             message="Comprehensive fraud analysis using Microsoft Agent Framework with parallel execution and observability",
-            transaction_id="TX1015"
+            transaction_id=transaction_id
         )
         
         workflow_span.set_attributes({
@@ -1314,7 +1452,7 @@ async def run_fraud_detection_workflow():
         
         return compliance_output, fraud_alert_output
 
-async def main():
+async def main(transaction_id: str = "TX1015"):
     """Main function with observability setup and parallel workflow execution."""
     
     # Initialize observability first
@@ -1336,7 +1474,7 @@ async def main():
         
         try:
             main_span.add_event("Starting parallel workflow execution")
-            compliance_result, fraud_alert_result = await run_fraud_detection_workflow()
+            compliance_result, fraud_alert_result = await run_fraud_detection_workflow(transaction_id)
             
             # Record results in telemetry
             main_span.set_attributes({
@@ -1349,10 +1487,12 @@ async def main():
                 main_span.set_attributes({
                     "compliance.audit_report_id": compliance_result.audit_report_id,
                     "compliance.transaction_id": compliance_result.transaction_id,
+                    "compliance.customer_id": compliance_result.customer_id,
                     "compliance.rating": compliance_result.compliance_rating,
                     "compliance.risk_score": compliance_result.risk_score,
                     "compliance.immediate_action": compliance_result.requires_immediate_action,
-                    "compliance.regulatory_filing": compliance_result.requires_regulatory_filing
+                    "compliance.regulatory_filing": compliance_result.requires_regulatory_filing,
+                    "compliance.report_file_path": compliance_result.report_file_path
                 })
             
             if fraud_alert_result:
@@ -1373,6 +1513,7 @@ async def main():
                 print(f"\n📋 COMPLIANCE REPORT EXECUTOR:")
                 print(f"   Status: {compliance_result.status}")
                 print(f"   Transaction ID: {compliance_result.transaction_id}")
+                print(f"   Customer ID: {compliance_result.customer_id}")
                 print(f"   Audit Report ID: {compliance_result.audit_report_id}")
                 print(f"   Compliance Rating: {compliance_result.compliance_rating}")
                 print(f"   Risk Score: {compliance_result.risk_score:.2f}")
@@ -1382,8 +1523,11 @@ async def main():
                     print("   ⚠️  IMMEDIATE ACTION REQUIRED")
                 if compliance_result.requires_regulatory_filing:
                     print("   📋 REGULATORY FILING REQUIRED")
+                
+                if compliance_result.report_file_path:
+                    print(f"\n   📄 REPORT SAVED TO: {compliance_result.report_file_path}")
             else:
-                print(f"\n� COMPLIANCE REPORT EXECUTOR: ❌ FAILED")
+                print(f"\n📋 COMPLIANCE REPORT EXECUTOR: ❌ FAILED")
             
             # Display Fraud Alert results
             if fraud_alert_result and isinstance(fraud_alert_result, FraudAlertResponse):
@@ -1399,7 +1543,7 @@ async def main():
                 if fraud_alert_result.created_timestamp:
                     print(f"   Created At: {fraud_alert_result.created_timestamp}")
             else:
-                print(f"\n� FRAUD ALERT EXECUTOR: ❌ FAILED")
+                print(f"\n🚨 FRAUD ALERT EXECUTOR: ❌ FAILED")
             
             main_span.add_event("Parallel workflow results displayed successfully")
             
@@ -1416,4 +1560,9 @@ async def main():
             print(f"\n🔍 Trace completed: {trace_id}")
 
 if __name__ == "__main__":
-    compliance, fraud_alert = asyncio.run(main())
+    parser = argparse.ArgumentParser(description="Run fraud detection workflow with observability")
+    parser.add_argument("--transaction-id", "-t", type=str, default="TX1015",
+                        help="Transaction ID to analyze (default: TX1015)")
+    args = parser.parse_args()
+    
+    compliance, fraud_alert = asyncio.run(main(args.transaction_id))
